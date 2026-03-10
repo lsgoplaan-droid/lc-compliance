@@ -37,9 +37,8 @@ class OCRExtractor:
         pages_text = []
 
         for page in doc:
-            # Render page to image at 300 DPI as numpy array
-            pix = page.get_pixmap(dpi=300)
-            img_bytes = pix.tobytes("png")
+            # Render page to image at 200 DPI (balance quality vs speed for cloud)
+            pix = page.get_pixmap(dpi=200)
             img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
                 pix.height, pix.width, pix.n
             )

@@ -1,3 +1,4 @@
+import logging
 from uuid import uuid4
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from storage.session_store import session_store
 from storage.file_store import file_store
 from services.document_parser import document_parser
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["upload"])
 
 
@@ -33,9 +35,15 @@ async def upload_document(
     saved_path = file_store.save(session_id, file.filename, content)
 
     doc_id = uuid4().hex[:12]
-    raw_text, extraction_method, fields = document_parser.parse(
-        str(saved_path), document_type
-    )
+    logger.info(f"Parsing {file.filename} ({document_type}) at {saved_path}")
+    try:
+        raw_text, extraction_method, fields = document_parser.parse(
+            str(saved_path), document_type
+        )
+    except Exception as e:
+        logger.error(f"Parsing failed for {file.filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Document parsing failed: {str(e)}")
+    logger.info(f"Parsed {file.filename}: method={extraction_method}, fields={len([f for f in fields.values() if f.value])}")
 
     doc = ExtractedDocument(
         doc_id=doc_id,
