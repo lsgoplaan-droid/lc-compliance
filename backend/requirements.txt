@@ -1,0 +1,21 @@
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# PDF text extraction
+PyMuPDF
+
+# OCR
+pytesseract
+Pillow
+
+# Fuzzy matching
+rapidfuzz
+
+# Date parsing
+python-dateutil
+
+# Testing
+pytest
+httpx
