@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSession } from "../context/SessionContext";
 import { DocumentType, DOCUMENT_TYPE_LABELS } from "../types/document";
 import { uploadDocument } from "../api/documents";
@@ -17,6 +17,18 @@ export default function UploadPage({ onComplete }: Props) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [docType, setDocType] = useState<DocumentType>(DocumentType.COMMERCIAL_INVOICE);
   const [lastUpload, setLastUpload] = useState<any>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (uploading) {
+      setElapsed(0);
+      timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [uploading]);
 
   const lcDoc = documents.find((d) => d.document_type === DocumentType.LC_ADVICE);
   const supportingDocs = documents.filter((d) => d.document_type !== DocumentType.LC_ADVICE);
@@ -136,9 +148,15 @@ export default function UploadPage({ onComplete }: Props) {
 
       {/* Upload status */}
       {uploading && (
-        <div className="flex items-center gap-2 text-blue-600">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Uploading and extracting fields...</span>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
+          <div className="flex items-center gap-2 text-blue-600">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-sm font-medium">Uploading and extracting fields...</span>
+          </div>
+          <p className="text-xs text-blue-500">
+            Elapsed: {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+            {elapsed > 10 && " — Scanned PDFs may take 1-2 minutes on free tier"}
+          </p>
         </div>
       )}
 
