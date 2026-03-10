@@ -155,7 +155,7 @@ export default function UploadPage({ onComplete }: Props) {
           </div>
           <p className="text-xs text-blue-500">
             Elapsed: {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
-            {elapsed > 10 && " — For faster processing, an upgrade is required"}
+            {elapsed > 10 && " — Processing. Wait to finish. For faster processing an upgrade is required. Speak to your provider."}
           </p>
         </div>
       )}
