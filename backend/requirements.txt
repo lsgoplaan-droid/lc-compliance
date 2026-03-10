@@ -6,8 +6,8 @@ python-multipart
 # PDF text extraction
 PyMuPDF
 
-# OCR
-pytesseract
+# OCR (pure Python - no system packages needed)
+rapidocr-onnxruntime
 Pillow
 
 # Fuzzy matching

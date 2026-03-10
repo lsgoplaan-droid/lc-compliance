@@ -5,42 +5,53 @@ import fitz  # PyMuPDF
 logger = logging.getLogger(__name__)
 
 try:
-    import pytesseract
-    from PIL import Image
+    from rapidocr_onnxruntime import RapidOCR
+    import numpy as np
     import io
-    from config import TESSERACT_CMD
-
-    if TESSERACT_CMD:
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
-    logger.warning("pytesseract or Pillow not installed. OCR will be unavailable.")
+    logger.warning("rapidocr-onnxruntime not installed. OCR will be unavailable.")
 
 
 class OCRExtractor:
+    def __init__(self):
+        self._engine = None
+
+    def _get_engine(self):
+        if self._engine is None and OCR_AVAILABLE:
+            self._engine = RapidOCR()
+        return self._engine
+
     def extract(self, file_path: str) -> str:
         if not OCR_AVAILABLE:
             logger.warning("OCR not available, returning empty text")
+            return ""
+
+        engine = self._get_engine()
+        if not engine:
             return ""
 
         doc = fitz.open(file_path)
         pages_text = []
 
         for page in doc:
-            # Render page to image at 300 DPI
+            # Render page to image at 300 DPI as numpy array
             pix = page.get_pixmap(dpi=300)
             img_bytes = pix.tobytes("png")
-            img = Image.open(io.BytesIO(img_bytes))
+            img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n
+            )
 
-            # Convert to grayscale for better OCR
-            img = img.convert("L")
-
-            # Run OCR
+            # Run OCR (rapidocr accepts numpy arrays)
             try:
-                text = pytesseract.image_to_string(img)
-                pages_text.append(text)
+                result, _ = engine(img_array)
+                if result:
+                    text = "\n".join([line[1] for line in result])
+                    pages_text.append(text)
+                else:
+                    pages_text.append("")
             except Exception as e:
                 logger.error(f"OCR failed on page {page.number}: {e}")
                 pages_text.append("")
