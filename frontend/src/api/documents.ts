@@ -14,7 +14,7 @@ export async function uploadDocument(
   const { data } = await api.post(
     `/sessions/${sessionId}/upload`,
     formData,
-    { headers: { "Content-Type": "multipart/form-data" } }
+    { headers: { "Content-Type": "multipart/form-data" }, timeout: 120000 }
   );
   return data;
 }

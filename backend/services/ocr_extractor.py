@@ -37,20 +37,34 @@ class OCRExtractor:
         pages_text = []
 
         for page in doc:
-            # Render page to image at 200 DPI (balance quality vs speed for cloud)
-            pix = page.get_pixmap(dpi=200)
+            # Render page to image at 150 DPI (fast enough for cloud free tier)
+            pix = page.get_pixmap(dpi=150)
+
+            # Limit image size: resize if too large (max 2000px on longest side)
+            max_dim = max(pix.width, pix.height)
+            if max_dim > 2000:
+                scale = 2000 / max_dim
+                pix = page.get_pixmap(dpi=int(150 * scale))
+
             img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
                 pix.height, pix.width, pix.n
             )
 
+            # Convert RGBA to RGB if needed (rapidocr expects 3 channels)
+            if pix.n == 4:
+                img_array = img_array[:, :, :3]
+
             # Run OCR (rapidocr accepts numpy arrays)
             try:
+                logger.info(f"OCR page {page.number}: {pix.width}x{pix.height} ({pix.n}ch)")
                 result, _ = engine(img_array)
                 if result:
                     text = "\n".join([line[1] for line in result])
                     pages_text.append(text)
+                    logger.info(f"OCR page {page.number}: extracted {len(text)} chars")
                 else:
                     pages_text.append("")
+                    logger.info(f"OCR page {page.number}: no text found")
             except Exception as e:
                 logger.error(f"OCR failed on page {page.number}: {e}")
                 pages_text.append("")
