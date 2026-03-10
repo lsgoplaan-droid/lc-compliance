@@ -1,3 +1,4 @@
+import gc
 import logging
 
 import fitz  # PyMuPDF
@@ -7,7 +8,6 @@ logger = logging.getLogger(__name__)
 try:
     from rapidocr_onnxruntime import RapidOCR
     import numpy as np
-    import io
 
     OCR_AVAILABLE = True
 except ImportError:
@@ -37,14 +37,13 @@ class OCRExtractor:
         pages_text = []
 
         for page in doc:
-            # Render page to image at 150 DPI (fast enough for cloud free tier)
-            pix = page.get_pixmap(dpi=150)
+            # Use low DPI (100) and cap at 1200px to stay within Render free tier memory
+            pix = page.get_pixmap(dpi=100)
 
-            # Limit image size: resize if too large (max 2000px on longest side)
             max_dim = max(pix.width, pix.height)
-            if max_dim > 2000:
-                scale = 2000 / max_dim
-                pix = page.get_pixmap(dpi=int(150 * scale))
+            if max_dim > 1200:
+                scale = 1200 / max_dim
+                pix = page.get_pixmap(dpi=int(100 * scale))
 
             img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
                 pix.height, pix.width, pix.n
@@ -52,7 +51,7 @@ class OCRExtractor:
 
             # Convert RGBA to RGB if needed (rapidocr expects 3 channels)
             if pix.n == 4:
-                img_array = img_array[:, :, :3]
+                img_array = img_array[:, :, :3].copy()
 
             # Run OCR (rapidocr accepts numpy arrays)
             try:
@@ -68,6 +67,10 @@ class OCRExtractor:
             except Exception as e:
                 logger.error(f"OCR failed on page {page.number}: {e}")
                 pages_text.append("")
+            finally:
+                # Free memory between pages
+                del img_array, pix
+                gc.collect()
 
         doc.close()
         return "\n\n".join(pages_text)

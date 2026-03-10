@@ -3,11 +3,9 @@ services:
     name: lc-compliance-api
     runtime: python
     rootDir: backend
-    buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
     envVars:
-      - key: TESSERACT_CMD
-        value: /usr/bin/tesseract
       - key: FRONTEND_URL
         sync: false
       - key: PYTHON_VERSION
