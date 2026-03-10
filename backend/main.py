@@ -24,4 +24,20 @@ app.include_router(reports.router, prefix="/api")
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    import shutil
+    import subprocess
+    tesseract_path = shutil.which("tesseract")
+    tesseract_version = None
+    if tesseract_path:
+        try:
+            result = subprocess.run([tesseract_path, "--version"], capture_output=True, text=True)
+            tesseract_version = result.stdout.split("\n")[0] if result.stdout else result.stderr.split("\n")[0]
+        except Exception:
+            pass
+    from services.ocr_extractor import OCR_AVAILABLE
+    return {
+        "status": "ok",
+        "tesseract_path": tesseract_path,
+        "tesseract_version": tesseract_version,
+        "ocr_available": OCR_AVAILABLE,
+    }
