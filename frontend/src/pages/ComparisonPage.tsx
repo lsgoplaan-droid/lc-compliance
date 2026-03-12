@@ -16,7 +16,8 @@ export default function ComparisonPage({ onComplete, onBack }: Props) {
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   useEffect(() => {
-    if (comparisons.length === 0 && !loading) {
+    // Always run comparison on mount — handles new docs uploaded after previous run
+    if (!loading) {
       runComparison();
     }
   }, []);

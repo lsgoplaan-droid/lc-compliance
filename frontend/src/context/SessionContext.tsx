@@ -79,7 +79,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!state.session) return;
     try {
       const documents = await documentsApi.listDocuments(state.session.session_id);
-      setState((s) => ({ ...s, documents }));
+      // Clear stale comparisons/report when doc list changes
+      setState((s) => ({ ...s, documents, comparisons: [], report: null }));
     } catch (e: any) {
       setError(e.response?.data?.detail || "Failed to refresh documents");
     }

@@ -3,6 +3,8 @@ import logging
 
 import fitz  # PyMuPDF
 
+from config import OCR_DPI, OCR_MAX_DIM
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -37,13 +39,13 @@ class OCRExtractor:
         pages_text = []
 
         for page in doc:
-            # Use low DPI (100) and cap at 1200px to stay within Render free tier memory
-            pix = page.get_pixmap(dpi=100)
+            # DPI and max dimension controlled by config (200/2400 local, 100/1200 on Render)
+            pix = page.get_pixmap(dpi=OCR_DPI)
 
             max_dim = max(pix.width, pix.height)
-            if max_dim > 1200:
-                scale = 1200 / max_dim
-                pix = page.get_pixmap(dpi=int(100 * scale))
+            if max_dim > OCR_MAX_DIM:
+                scale = OCR_MAX_DIM / max_dim
+                pix = page.get_pixmap(dpi=int(OCR_DPI * scale))
 
             img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
                 pix.height, pix.width, pix.n

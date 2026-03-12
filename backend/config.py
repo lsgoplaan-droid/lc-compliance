@@ -20,6 +20,8 @@ FUZZY_PORT_THRESHOLD = 0.85
 
 # OCR settings (uses rapidocr-onnxruntime, no system packages needed)
 OCR_MIN_CHARS_PER_PAGE = 50
+OCR_DPI = int(os.environ.get("OCR_DPI", "300"))  # 300 for local, set 150 on Render free tier
+OCR_MAX_DIM = int(os.environ.get("OCR_MAX_DIM", "3600"))  # cap image dimension
 
 # CORS
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")

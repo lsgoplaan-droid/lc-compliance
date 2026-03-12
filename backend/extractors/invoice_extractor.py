@@ -191,12 +191,29 @@ class InvoiceExtractor(BaseFieldExtractor):
                         break
         fields["quantity"] = self._make_field(val, conf)
 
-        # Unit Price
+        # Unit Price — try explicit patterns first, then extract from table
         val, conf = self._find_pattern_confidence(text, [
             r"PRICE\s+USD\s+([\d,]+\.?\d*)\s*/\s*MT",
+            r"PRICE\s+(?:USD\s+)?([\d,]+\.?\d*)\s*/\s*(?:MT|MTS|KG)",
             r"(?:UNIT\s*PRICE|PRICE\s*PER)\s*[:.&]?\s*(?:[A-Z]{3}\s*)?([\d,]+\.?\d*)",
             r"(?:@|AT)\s*(?:[A-Z]{3}\s*)?([\d,]+\.?\d*)\s*(?:PER|/)",
         ])
+        if not val:
+            # Extract from tabular format: look for PRICE/ column header, then value below
+            # Table layout: PRICE/ → several header lines → quantity → unit_price → product → amount
+            for i, line in enumerate(lines):
+                if re.search(r"PRICE\s*/", line, re.IGNORECASE):
+                    # Scan next lines for a decimal number that looks like a unit price
+                    for j in range(i + 1, min(i + 10, len(lines))):
+                        candidate = lines[j].strip()
+                        m = re.match(r"^([\d,]+\.\d{2})$", candidate)
+                        if m:
+                            price_val = float(m.group(1).replace(",", ""))
+                            # Unit prices are typically < 5000; skip totals
+                            if price_val < 5000:
+                                val, conf = m.group(1), 0.8
+                                break
+                    break
         fields["unit_price"] = self._make_field(val, conf)
 
         # Incoterms — prefer TRADE TERM line over random mentions
