@@ -116,6 +116,12 @@ class ComparisonEngine:
         )
 
     def _fuzzy_match(self, field_name, category, lc_value, doc_value, config):
+        # Special port matching: "ANY SEAPORT OF <COUNTRY>" means any port in that country
+        if field_name in ("port_of_loading", "port_of_discharge"):
+            port_result = self._match_port(field_name, category, lc_value, doc_value, config)
+            if port_result:
+                return port_result
+
         if "name" in field_name:
             score = fuzzy_matcher.match_names(lc_value, doc_value)
         elif "address" in field_name:
@@ -135,8 +141,13 @@ class ComparisonEngine:
         )
 
     def _numeric_match(self, field_name, category, lc_value, doc_value, config):
-        lc_num = parse_amount(lc_value)
-        doc_num = parse_amount(doc_value)
+        # For quantity fields, normalize weight units (MT vs KGS) before comparison
+        if field_name == "quantity":
+            lc_num = self._parse_quantity_normalized(lc_value)
+            doc_num = self._parse_quantity_normalized(doc_value)
+        else:
+            lc_num = parse_amount(lc_value)
+            doc_num = parse_amount(doc_value)
 
         if lc_num is None or doc_num is None:
             return FieldComparison(
@@ -304,6 +315,43 @@ class ComparisonEngine:
             severity=Severity.INFO if is_match else config.severity,
             note=note,
         )
+
+    def _match_port(self, field_name, category, lc_value, doc_value, config):
+        """Handle 'ANY SEAPORT/PORT OF <COUNTRY>' LC specifications."""
+        lc_upper = lc_value.upper()
+        doc_upper = doc_value.upper()
+        m = re.match(r"ANY\s+(?:SEA)?PORT\s+(?:OF|IN)\s+(.+)", lc_upper)
+        if m:
+            country = m.group(1).strip()
+            # If doc port is in that country, it's a match
+            if country in doc_upper:
+                return FieldComparison(
+                    field_name=field_name, field_category=category,
+                    lc_value=lc_value, doc_value=doc_value,
+                    match_status=MatchStatus.MATCH,
+                    match_strategy=config.strategy, similarity_score=1.0,
+                    severity=Severity.INFO,
+                    note=f"LC allows any port in {country}",
+                    ucp_rule=config.ucp_rule,
+                )
+        return None
+
+    @staticmethod
+    def _parse_quantity_normalized(text: str) -> Optional[float]:
+        """Parse a quantity value, normalizing weight units to MT (metric tons)."""
+        if not text:
+            return None
+        upper = text.upper()
+        raw_num = parse_amount(text)
+        if raw_num is None:
+            return None
+        # Detect unit and normalize to MT
+        if re.search(r"\bKGS?\b", upper):
+            return raw_num / 1000.0  # KGS -> MT
+        if re.search(r"\bLBS?\b", upper):
+            return raw_num / 2204.62  # LBS -> MT
+        # MT, MTS, TONS, or no unit — assume already in MT-compatible value
+        return raw_num
 
     @staticmethod
     def _normalize_exact(val: str) -> str:

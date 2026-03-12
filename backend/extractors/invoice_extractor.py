@@ -41,18 +41,19 @@ class InvoiceExtractor(BaseFieldExtractor):
                     break
         fields["invoice_date"] = self._make_field(val, conf)
 
-        # LC Reference - look for long number before DTD/DATED
+        # LC Reference - look for long number before DTD/DATED, or concatenated with DTD
         val, conf = self._find_pattern_confidence(text, [
-            r"(\d{10,})\s*(?:DTD|DATED|DT)",
+            r"(\d{10,})\s*(?:DTD|DATED|DT)",                        # 141325010091DTD30JUL2025
             r"(?:L/?C\s*(?:No\.?|Ref|Number|#))\s*[:.&]?\s*(?:Date)?\s*\n?\s*(\d{6,})",
             r"(?:L/?C\s*(?:No\.?|Ref|Number))\s*[:.&]?\s*([A-Z0-9][A-Z0-9/\-]+)",
         ])
         fields["lc_reference"] = self._make_field(val, conf)
 
-        # Seller - look for "FOR <company>" or "A/c. Name:"
+        # Seller - look for "FOR <company>", "A/c. Name:", or signature block
         seller_name = None
         for pattern in [
             r"A/c\.?\s*Name\s*:\s*(.+)",
+            r"(?:FOR\s+)(HARESH[A-Z\s.,()]+(?:PTE\.?\s*LTD\.?|LTD\.?|INC|CORP))",
             r"(?:FOR\s*)([A-Z][A-Z\s&.,]+(?:PTE\.?\s*LTD|LTD|INC|CORP|LLC|CO\.?))",
             r"(?:SELLER|EXPORTER|SHIPPER|BENEFICIARY)\s*[:.&]?\s*\n?\s*(.+)",
         ]:
@@ -61,7 +62,15 @@ class InvoiceExtractor(BaseFieldExtractor):
                 seller_name = m.group(1).strip()
                 break
         fields["seller_name"] = self._make_field(seller_name, 0.8 if seller_name else 0.0)
-        fields["seller_address"] = self._make_field(None)
+        # Seller address — look for explicit ADDRESS: label (not bank address)
+        seller_addr = None
+        m_addr = re.search(r"ADDRESS\s*:\s*(.+?)(?:\n\n|\nContinued)", text, re.IGNORECASE | re.DOTALL)
+        if m_addr:
+            addr_text = re.sub(r"\n\s*", " ", m_addr.group(1).strip()).strip()
+            # Skip if it's clearly a bank/SWIFT address
+            if not re.search(r"SWIFT|HSBC|BANK|BRANCH", addr_text, re.IGNORECASE):
+                seller_addr = addr_text
+        fields["seller_address"] = self._make_field(seller_addr, 0.7 if seller_addr else 0.0)
 
         # Buyer - look after "Buyer / Importer" keyword, skip header noise
         buyer_name = None
@@ -77,13 +86,21 @@ class InvoiceExtractor(BaseFieldExtractor):
                 line = lines[j].strip()
                 if re.search(r"(?:LIMITED|LTD|INC|CORP|LLC)\b", line, re.IGNORECASE):
                     buyer_name = line
-                    # Grab address from next lines
+                    # Grab address: skip junk lines (invoice refs, dates), keep location lines
                     addr_lines = []
-                    for k in range(j + 1, min(j + 4, len(lines))):
+                    for k in range(j + 1, min(j + 8, len(lines))):
                         al = lines[k].strip()
-                        if not al or re.match(r"(?:L/?C|Invoice|Vessel|Port|Date|Name|Haresh)", al, re.IGNORECASE):
+                        if not al:
                             break
-                        addr_lines.append(al)
+                        # Skip headers, invoice numbers, dates, bank names
+                        if re.match(r"(?:L/?C|Invoice|Vessel|Port|Date|Name|Haresh|HPS/|DHAKA|DHANMONDI|\d{1,2}-\d{1,2}-\d{4})", al, re.IGNORECASE):
+                            continue
+                        # Skip lines that are mostly numbers (LC refs, dates)
+                        if re.match(r"^\d{6,}", al):
+                            continue
+                        # Keep location-like lines (addresses, cities, countries)
+                        if re.search(r"(?:ESTATE|ROAD|STREET|FLOOR|CENTRE|BSCIC|KUSHTIA|BANGLADESH|SINGAPORE|CHINA|DHAKA|\d{4,}\s)", al, re.IGNORECASE):
+                            addr_lines.append(al)
                     if addr_lines:
                         buyer_addr = "\n".join(addr_lines)
                     break
@@ -121,17 +138,12 @@ class InvoiceExtractor(BaseFieldExtractor):
         # Goods Description - extract main product name
         val = None
         for line in lines:
-            line = line.strip()
+            line_s = line.strip()
             # Look for product name (e.g. "MONOETHYLENEGLYCOL" or "MONO ETHYLENE GLYCOL")
-            if re.search(r"GLYCOL|CHEMICAL|STEEL|COTTON|RICE|SUGAR|CEMENT|POLYMER", line, re.IGNORECASE):
-                if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE)", line, re.IGNORECASE):
-                    val = line
+            if re.search(r"GLYCOL|CHEMICAL|STEEL|COTTON|RICE|SUGAR|CEMENT|POLYMER", line_s, re.IGNORECASE):
+                if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING)", line_s, re.IGNORECASE):
+                    val = line_s
                     break
-        # Also try the detailed description line
-        for line in lines:
-            if re.search(r"QUANTITY\s+\d.*PRICE\s+USD.*H\.?S\.?\s*CODE", line, re.IGNORECASE):
-                val = line
-                break
         if not val:
             val_block = self._extract_block_after_keyword(text, [
                 "DESCRIPTION OF GOODS", "DESCRIPTIONOFGOODS", "DESCRIPTION"
@@ -146,19 +158,37 @@ class InvoiceExtractor(BaseFieldExtractor):
                 val = "\n".join(good_lines[:5]) if good_lines else None
         fields["goods_description"] = self._make_field(val, 0.7 if val else 0.0)
 
-        # HS Codes
+        # HS Codes — filter out monetary false positives
         hs_matches = re.findall(r"\b(\d{4}\.\d{2}(?:\.\d{2})?)\b", text)
         if hs_matches:
-            fields["hs_codes"] = self._make_field(", ".join(sorted(set(hs_matches))), 0.9)
+            filtered = []
+            for hs in sorted(set(hs_matches)):
+                monetary_pattern = rf"(?:USD|US\$|\$|EUR|GBP|CHARGE|FREIGHT|VALUE|TOTAL)\s*[:.]?\s*(?:USD\s*)?{re.escape(hs)}"
+                if not re.search(monetary_pattern, text, re.IGNORECASE):
+                    filtered.append(hs)
+            fields["hs_codes"] = self._make_field(", ".join(filtered) if filtered else None, 0.9 if filtered else 0.0)
         else:
             fields["hs_codes"] = self._make_field(None)
 
-        # Quantity
+        # Quantity — handle tabular format where quantity appears as standalone number
         val, conf = self._find_pattern_confidence(text, [
             r"QUANTITY\s+([\d,.]+)\s*(?:MT|MTS)\b",
             r"(\d[\d,]*\.\d+)\s*(?:MTS?|MT|KGS?)\b",
             r"(?:QUANTITY|QTY)\s*[:.&]?\s*([\d,]+\.?\d*\s*\w+)",
         ])
+        if not val:
+            # Look for quantity in table context: after "IN MTS" column header
+            for i, line in enumerate(lines):
+                if re.search(r"IN\s*MTS", line, re.IGNORECASE) or re.search(r"QUANTITY", line, re.IGNORECASE):
+                    # Scan next few lines for a decimal number (the quantity value)
+                    for j in range(i + 1, min(i + 5, len(lines))):
+                        candidate = lines[j].strip()
+                        m = re.match(r"^([\d,]+\.\d{2,})$", candidate)
+                        if m:
+                            val, conf = m.group(1), 0.85
+                            break
+                    if val:
+                        break
         fields["quantity"] = self._make_field(val, conf)
 
         # Unit Price
@@ -169,10 +199,30 @@ class InvoiceExtractor(BaseFieldExtractor):
         ])
         fields["unit_price"] = self._make_field(val, conf)
 
-        # Incoterms
-        val, conf = self._find_pattern_confidence(text, [
-            r"\b(EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b",
-        ])
+        # Incoterms — prefer TRADE TERM line over random mentions
+        val = None
+        conf = 0.0
+        m = re.search(r"TRADE\s*TERM\s*:\s*(\w+)", text, re.IGNORECASE)
+        if m:
+            candidate = m.group(1).upper()
+            if candidate in ("EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"):
+                val, conf = candidate, 1.0
+        if not val:
+            # Look for "Terms of Delivery" section
+            m = re.search(r"Terms\s*of\s*Delivery\s*\n\s*(\w+)", text, re.IGNORECASE)
+            if m:
+                candidate = m.group(1).upper()
+                if candidate in ("EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"):
+                    val, conf = candidate, 0.95
+        if not val:
+            for m_iter in re.finditer(r"\b(EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b", text):
+                start = max(0, m_iter.start() - 5)
+                end = min(len(text), m_iter.end() + 10)
+                context = text[start:end].upper()
+                if "FOB VALUE" in context or "FOB VALU" in context:
+                    continue
+                val, conf = m_iter.group(1), 0.9
+                break
         fields["incoterms"] = self._make_field(val, conf)
 
         # Port of Loading - look for line after "Port of Loading"
@@ -180,19 +230,19 @@ class InvoiceExtractor(BaseFieldExtractor):
         conf = 0.0
         for i, line in enumerate(lines):
             if re.search(r"Port\s*of\s*Loading", line, re.IGNORECASE):
+                # Check remaining text on same line first
+                after = re.split(r"Port\s*of\s*Loading", line, flags=re.IGNORECASE)[-1].strip()
+                if after and re.search(r"[A-Z]{3,}", after):
+                    val, conf = after, 0.9
+                    break
                 # Check next line(s) for the actual port
                 for j in range(i + 1, min(i + 3, len(lines))):
                     candidate = lines[j].strip()
                     if candidate and not re.match(r"(?:Port|Vessel|Final|Consignee|Name)", candidate, re.IGNORECASE):
-                        # Skip vessel names, look for city/country pattern
-                        if re.search(r"[A-Z]{3,}", candidate) and not re.search(r"XKMF|TERAT", candidate, re.IGNORECASE):
+                        if re.search(r"[A-Z]{3,}", candidate) and not re.search(r"^TERAT", candidate, re.IGNORECASE):
                             val, conf = candidate, 0.9
                             break
                 break
-        if not val:
-            val, conf = self._find_pattern_confidence(text, [
-                r"ORIGIN\s*:\s*([A-Z][A-Z\s,]+?)(?:\n|$)",
-            ])
         fields["port_of_loading"] = self._make_field(val, conf)
 
         # Port of Discharge - look for line after "Port of Discharge"
@@ -204,10 +254,8 @@ class InvoiceExtractor(BaseFieldExtractor):
                     candidate = lines[j].strip()
                     if not candidate:
                         continue
-                    # Skip headers and company names
                     if re.match(r"(?:Port|Final|Country|Bill|Name|BRB|BSC)", candidate, re.IGNORECASE):
                         continue
-                    # Look for port/seaport/city,country pattern
                     if re.search(r"(?:SEAPORT|PORT|HARBOR|TERMINAL|,\s*[A-Z]+$)", candidate, re.IGNORECASE):
                         val, conf = candidate, 0.9
                         break

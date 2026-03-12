@@ -28,11 +28,16 @@ class FuzzyMatcher:
 
     def _normalize(self, text: str) -> str:
         text = text.upper().strip()
-        text = re.sub(r"\s+", " ", text)
+        # Add space before/after punctuation to prevent token merging (e.g., "SEAPORT,BANGLADESH")
+        text = re.sub(r"([,;/])", r" ", text)
         text = re.sub(r"[^\w\s]", "", text)
-        return text
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
     def _normalize_name(self, name: str) -> str:
+        # Expand parenthetical abbreviations BEFORE stripping punctuation
+        # "(S)" is common in Singapore company names for "Singapore"
+        name = re.sub(r"\(\s*S\s*\)", " SINGAPORE ", name, flags=re.IGNORECASE)
         name = self._normalize(name)
         replacements = {
             "LIMITED": "LTD", "CORPORATION": "CORP", "INCORPORATED": "INC",
