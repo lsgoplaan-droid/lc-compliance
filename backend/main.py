@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import FRONTEND_URL
-from api.routes import sessions, upload, documents, compare, reports
+from api.routes import sessions, upload, documents, compare, reports, demo
 
 app = FastAPI(title="LC Compliance Checker", version="1.0.0")
 
@@ -20,6 +20,7 @@ app.include_router(upload.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(compare.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
+app.include_router(demo.router, prefix="/api")
 
 
 @app.get("/api/health")

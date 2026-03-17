@@ -6,10 +6,12 @@ import UploadPage from "./pages/UploadPage";
 import ReviewPage from "./pages/ReviewPage";
 import ComparisonPage from "./pages/ComparisonPage";
 import ReportPage from "./pages/ReportPage";
+import AboutPage from "./pages/AboutPage";
 
 function AppContent() {
   const { session, createSession, error, clearError, documents, comparisons } = useSession();
   const [step, setStep] = useState("upload");
+  const [showAbout, setShowAbout] = useState(false);
 
   useEffect(() => {
     if (!session) {
@@ -27,7 +29,8 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Header />
+      <Header onAboutClick={() => setShowAbout(true)} />
+      {showAbout && <AboutPage onClose={() => setShowAbout(false)} />}
       <StepIndicator
         currentStep={step}
         onStepClick={setStep}

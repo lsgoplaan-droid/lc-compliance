@@ -19,3 +19,8 @@ export async function getSession(sessionId: string): Promise<SessionResponse> {
 export async function deleteSession(sessionId: string): Promise<void> {
   await api.delete(`/sessions/${sessionId}`);
 }
+
+export async function createDemoSession(): Promise<SessionResponse> {
+  const { data } = await api.post("/demo");
+  return data;
+}

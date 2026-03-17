@@ -5,14 +5,14 @@ import { uploadDocument } from "../api/documents";
 import FileDropzone from "../components/upload/FileDropzone";
 import DocumentTypeSelector from "../components/upload/DocumentTypeSelector";
 import ExtractedFieldsView from "../components/documents/ExtractedFieldsView";
-import { FileText, Loader2 } from "lucide-react";
+import { FileText, Loader2, Play } from "lucide-react";
 
 interface Props {
   onComplete: () => void;
 }
 
 export default function UploadPage({ onComplete }: Props) {
-  const { session, documents, refreshDocuments } = useSession();
+  const { session, documents, refreshDocuments, loadDemoSession } = useSession();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [docType, setDocType] = useState<DocumentType>(DocumentType.COMMERCIAL_INVOICE);
@@ -63,8 +63,46 @@ export default function UploadPage({ onComplete }: Props) {
     }
   };
 
+  const [loadingDemo, setLoadingDemo] = useState(false);
+
+  const handleDemo = async () => {
+    setLoadingDemo(true);
+    try {
+      await loadDemoSession();
+      onComplete();
+    } catch {
+      setUploadError("Failed to load demo data");
+    } finally {
+      setLoadingDemo(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-8">
+      {/* Demo Banner */}
+      {!lcDoc && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-5 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-blue-900">New here? Try a demo</h3>
+            <p className="text-xs text-blue-600 mt-1">
+              Load sample LC advice, Invoice, Certificate of Origin, and Packing List to see how compliance checking works.
+            </p>
+          </div>
+          <button
+            onClick={handleDemo}
+            disabled={loadingDemo}
+            className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 shrink-0 ml-4"
+          >
+            {loadingDemo ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4" />
+            )}
+            Try Demo
+          </button>
+        </div>
+      )}
+
       {/* Step 1: LC Advice */}
       <section>
         <h2 className="text-lg font-semibold text-slate-800 mb-3">

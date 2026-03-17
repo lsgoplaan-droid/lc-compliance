@@ -16,6 +16,7 @@ interface SessionState {
 
 interface SessionContextType extends SessionState {
   createSession: () => Promise<void>;
+  loadDemoSession: () => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
   refreshDocuments: () => Promise<void>;
   runComparison: () => Promise<void>;
@@ -53,6 +54,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }));
     } catch (e: any) {
       setError(e.response?.data?.detail || "Failed to create session");
+    }
+  }, []);
+
+  const loadDemoSession = useCallback(async () => {
+    setLoading(true);
+    try {
+      const session = await sessionsApi.createDemoSession();
+      const documents = await documentsApi.listDocuments(session.session_id);
+      setState((s) => ({
+        ...s,
+        session,
+        documents,
+        comparisons: [],
+        report: null,
+        loading: false,
+        error: null,
+      }));
+    } catch (e: any) {
+      setError(e.response?.data?.detail || "Failed to load demo");
     }
   }, []);
 
@@ -115,6 +135,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       value={{
         ...state,
         createSession,
+        loadDemoSession,
         loadSession,
         refreshDocuments,
         runComparison,
