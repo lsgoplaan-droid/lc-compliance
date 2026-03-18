@@ -5,14 +5,14 @@ import { uploadDocument } from "../api/documents";
 import FileDropzone from "../components/upload/FileDropzone";
 import DocumentTypeSelector from "../components/upload/DocumentTypeSelector";
 import ExtractedFieldsView from "../components/documents/ExtractedFieldsView";
-import { FileText, Loader2, Play } from "lucide-react";
+import { FileText, Loader2, Play, RotateCcw } from "lucide-react";
 
 interface Props {
   onComplete: () => void;
 }
 
 export default function UploadPage({ onComplete }: Props) {
-  const { session, documents, refreshDocuments, loadDemoSession } = useSession();
+  const { session, documents, refreshDocuments, loadDemoSession, createSession } = useSession();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [docType, setDocType] = useState<DocumentType>(DocumentType.COMMERCIAL_INVOICE);
@@ -79,19 +79,32 @@ export default function UploadPage({ onComplete }: Props) {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      {/* Demo Banner */}
-      {!lcDoc && (
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-5 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-blue-900">New here? Try a demo</h3>
-            <p className="text-xs text-blue-600 mt-1">
-              Load sample LC advice, Invoice, Certificate of Origin, and Packing List to see how compliance checking works.
-            </p>
-          </div>
+      {/* Demo / New Session Banner */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-5 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-blue-900">
+            {lcDoc ? "Want to start over?" : "New here? Try a demo"}
+          </h3>
+          <p className="text-xs text-blue-600 mt-1">
+            {lcDoc
+              ? "Start a new session to upload different documents, or load demo data."
+              : "Load sample LC advice, Invoice, Certificate of Origin, and Packing List to see how compliance checking works."}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 ml-4">
+          {lcDoc && (
+            <button
+              onClick={() => createSession()}
+              className="flex items-center gap-2 border border-slate-300 bg-white text-slate-700 px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+            >
+              <RotateCcw className="w-4 h-4" />
+              New Session
+            </button>
+          )}
           <button
             onClick={handleDemo}
             disabled={loadingDemo}
-            className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 shrink-0 ml-4"
+            className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
             {loadingDemo ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -101,7 +114,7 @@ export default function UploadPage({ onComplete }: Props) {
             Try Demo
           </button>
         </div>
-      )}
+      </div>
 
       {/* Step 1: LC Advice */}
       <section>

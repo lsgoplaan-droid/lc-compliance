@@ -101,7 +101,10 @@ export default function AboutPage({ onClose }: Props) {
             </div>
           </div>
 
-          <div className="border-t border-slate-200 pt-4">
+          <div className="border-t border-slate-200 pt-4 space-y-1">
+            <p className="text-xs text-slate-500 text-center font-medium">
+              Developed by LS Gopalan
+            </p>
             <p className="text-xs text-slate-400 text-center">
               Built with FastAPI, React, and OCR. No data is sent to external AI services.
             </p>
