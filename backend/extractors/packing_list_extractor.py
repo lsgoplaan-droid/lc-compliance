@@ -107,10 +107,10 @@ class PackingListExtractor(BaseFieldExtractor):
                 val = "\n".join(good_lines[:3]) if good_lines else None
         fields["goods_description"] = self._make_field(val, 0.7 if val else 0.0)
 
-        # Quantity — look for net weight or package count
+        # Quantity — prefer explicit QUANTITY label, then net weight
         val, conf = self._find_pattern_confidence(text, [
-            r"(?:TOTAL\s*(?:PACKAGES|CTNS|CARTONS|QUANTITY)|NO\.?\s*OF\s*(?:PACKAGES|CTNS))\s*[:.]?\s*([\d,]+\s*\w*)",
-            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|MT|MTS|KGS?)\b)",
+            r"(?:TOTAL\s*QUANTITY|QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:PCS|PIECES?|METRIC\s*TONS?|MT|MTS|KGS?|BAGS?)?)",
+            r"(?:TOTAL\s*(?:PACKAGES|CTNS|CARTONS)|NO\.?\s*OF\s*(?:PACKAGES|CTNS))\s*[:.]?\s*([\d,]+\s*\w*)",
         ])
         if not val:
             # Look for total net weight (prefer full word "NET WEIGHT" over abbreviation "NETWT")
@@ -168,16 +168,27 @@ class PackingListExtractor(BaseFieldExtractor):
 
     def _find_product_description(self, lines: list) -> Optional[str]:
         """Find the main product description line."""
-        for line in lines:
-            line_s = line.strip()
-            if re.search(r"GLYCOL|CHEMICAL|STEEL|COTTON|\bRICE\b|\bOIL\b|SUGAR|CEMENT|POLYMER|CRUDE|PETROLEUM|FUEL|DIESEL|LNG|NAPHTHA", line_s, re.IGNORECASE):
-                if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING|CERTIFIED|COUNTRY|PRODUCT\s*:)", line_s, re.IGNORECASE):
-                    return line_s
-        # Also try "PRODUCT:" label
+        # Try "PRODUCT:" label first
         for line in lines:
             m = re.match(r"PRODUCT\s*:\s*(.+)", line.strip(), re.IGNORECASE)
             if m:
                 val = m.group(1).strip()
                 if len(val) > 5:
                     return val
+        # Try block after "DESCRIPTION OF GOODS"
+        for i, line in enumerate(lines):
+            if re.search(r"DESCRIPTION\s*OF\s*GOODS", line, re.IGNORECASE):
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    candidate = lines[j].strip()
+                    if candidate and not re.match(r"^(?:QUANTITY|QTY|PRICE|AMOUNT|PACKED|CROP|H\.?S|L/?C|[\d,.]+\s*$)", candidate, re.IGNORECASE):
+                        return candidate
+                break
+        # Keyword scan fallback
+        product_keywords = r"GLYCOL|CHEMICAL|STEEL|\bCOTTON\b|\bRICE\b|\bOIL\b|SUGAR|CEMENT|POLYMER|CRUDE|PETROLEUM|FUEL|DIESEL|LNG|NAPHTHA|T-SHIRT|GARMENT|KNITTED|WOVEN|JASMINE|BASMATI"
+        for line in lines:
+            line_s = line.strip()
+            if re.search(product_keywords, line_s, re.IGNORECASE):
+                if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING|CERTIFIED|COUNTRY)", line_s, re.IGNORECASE):
+                    if not re.search(r"\b(?:LLC|LTD|LIMITED|INC|CORP|PTE)\b", line_s, re.IGNORECASE):
+                        return line_s
         return None

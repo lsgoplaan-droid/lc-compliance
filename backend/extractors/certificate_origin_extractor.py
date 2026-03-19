@@ -88,20 +88,21 @@ class CertificateOfOriginExtractor(BaseFieldExtractor):
                     break
         fields["country_of_origin"] = self._make_field(val, conf)
 
-        # Goods Description — look for product name line
-        val = self._find_product_description(lines)
+        # Goods Description — try block extraction first, then keyword scan
+        val = None
+        val_block = self._extract_block_after_keyword(text, [
+            "DESCRIPTION OF GOODS", "DESCRIPTIONOFGOODS",
+        ], max_lines=5)
+        if val_block:
+            good_lines = []
+            for l in val_block.split("\n"):
+                l = l.strip()
+                if l and not re.match(r"^(?:QUANTITY|QTY|PRICE|AMOUNT|IN MTS|PACKED|CROP|H\.?S\.?\s*CODE|L/?C|INVOICE|[\d,.]+\s*$)", l, re.IGNORECASE):
+                    good_lines.append(l)
+            if good_lines:
+                val = good_lines[0]
         if not val:
-            val_block = self._extract_block_after_keyword(text, [
-                "DESCRIPTIONOFGOODS", "DESCRIPTION OF GOODS",
-            ], max_lines=5)
-            if val_block:
-                # Filter noise
-                good_lines = []
-                for l in val_block.split("\n"):
-                    l = l.strip()
-                    if l and not re.match(r"^(?:QUANTITY|PRICE|AMOUNT|IN MTS|[\d,.]+)$", l, re.IGNORECASE):
-                        good_lines.append(l)
-                val = "\n".join(good_lines[:3]) if good_lines else None
+            val = self._find_product_description(lines)
         fields["goods_description"] = self._make_field(val, 0.7 if val else 0.0)
 
         # HS Codes — filter out monetary false positives
@@ -116,10 +117,9 @@ class CertificateOfOriginExtractor(BaseFieldExtractor):
         else:
             fields["hs_codes"] = self._make_field(None)
 
-        # Quantity — look for net weight as quantity (for bulk goods)
+        # Quantity — look for explicit quantity or net weight
         val, conf = self._find_pattern_confidence(text, [
-            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|MT|MTS|KGS?)\b)",
-            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:MT|MTS|KGS?)\b)",
+            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:PCS|PIECES?|METRIC\s*TONS?|MT|MTS|KGS?|BAGS?)?)",
             r"NETWEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?))",
             r"NET\s*WEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?))",
         ])
@@ -146,7 +146,7 @@ class CertificateOfOriginExtractor(BaseFieldExtractor):
                 return m.group(1).strip()
 
         # Try standard "EXPORTER:" label with value on same line
-        m = re.search(r"(?:EXPORTER|SHIPPER|CONSIGNOR|MANUFACTURER)\s*[:.]?\s*\n?\s*(.+)", text, re.IGNORECASE)
+        m = re.search(r"(?:^|\n)\s*(?:EXPORTER|SHIPPER|CONSIGNOR|MANUFACTURER)\s*[:.]?\s*\n?\s*(.+)", text, re.IGNORECASE)
         if m:
             candidate = m.group(1).strip()
             # If the value is another label (e.g. "CONSIGNEE / IMPORTER:"), it's a two-column layout

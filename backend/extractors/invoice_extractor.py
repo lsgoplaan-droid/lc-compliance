@@ -150,29 +150,29 @@ class InvoiceExtractor(BaseFieldExtractor):
             ])
         fields["total_amount"] = self._make_field(val, conf)
 
-        # Goods Description - extract main product name
+        # Goods Description - try block extraction first, then keyword scan
         val = None
-        for line in lines:
-            line_s = line.strip()
-            # Look for product name (e.g. "MONOETHYLENEGLYCOL" or "MONO ETHYLENE GLYCOL")
-            if re.search(r"(?:GLYCOL|CHEMICAL\b|\bSTEEL\b|\bCOTTON\b|\bRICE\b|\bSUGAR\b|\bCEMENT\b|POLYMER|\bCRUDE\b|\bOIL\b|PETROLEUM|\bFUEL\b|\bDIESEL\b|\bGASOLINE\b|\bLNG\b|\bLPG\b|\bNAPHTHA\b|\bBITUMEN\b)", line_s, re.IGNORECASE):
-                if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING)", line_s, re.IGNORECASE):
-                    # Skip company names (e.g. "ARABIAN GULF PETROLEUM LLC")
-                    if not re.search(r"\b(?:LLC|LTD|LIMITED|INC|CORP|PTE)\b", line_s, re.IGNORECASE):
-                        val = line_s
-                        break
+        val_block = self._extract_block_after_keyword(text, [
+            "DESCRIPTION OF GOODS", "DESCRIPTIONOFGOODS",
+        ], max_lines=8)
+        if val_block:
+            good_lines = []
+            for l in val_block.split("\n"):
+                l = l.strip()
+                if l and not re.match(r"^(?:IN MTS|QUANTITY|QTY|PRICE|AMOUNT|US\$|USD|Unit Price|Description|Quantity|Amount|TOTAL|PACKED|CROP|STYLE|[\d,.]+\s*$)", l, re.IGNORECASE):
+                    good_lines.append(l)
+            if good_lines:
+                val = good_lines[0]  # First meaningful line is the product name
         if not val:
-            val_block = self._extract_block_after_keyword(text, [
-                "DESCRIPTION OF GOODS", "DESCRIPTIONOFGOODS", "DESCRIPTION"
-            ], max_lines=8)
-            if val_block:
-                # Filter noise lines
-                good_lines = []
-                for l in val_block.split("\n"):
-                    l = l.strip()
-                    if l and not re.match(r"^(?:IN MTS|QUANTITY|PRICE|AMOUNT|US\$|Unit Price|Description|[\d,.]+)", l, re.IGNORECASE):
-                        good_lines.append(l)
-                val = "\n".join(good_lines[:5]) if good_lines else None
+            # Keyword scan fallback
+            product_keywords = r"(?:GLYCOL|CHEMICAL\b|\bSTEEL\b|\bCOTTON\b|\bRICE\b|\bSUGAR\b|\bCEMENT\b|POLYMER|\bCRUDE\b|\bOIL\b|PETROLEUM|\bFUEL\b|\bDIESEL\b|\bGASOLINE\b|\bLNG\b|\bLPG\b|\bNAPHTHA\b|\bBITUMEN\b|\bT-SHIRT|\bGARMENT|\bKNITTED\b|\bWOVEN\b|\bFABRIC\b|\bJASMINE\b|\bBAMATI\b)"
+            for line in lines:
+                line_s = line.strip()
+                if re.search(product_keywords, line_s, re.IGNORECASE):
+                    if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING)", line_s, re.IGNORECASE):
+                        if not re.search(r"\b(?:LLC|LTD|LIMITED|INC|CORP|PTE)\b", line_s, re.IGNORECASE):
+                            val = line_s
+                            break
         fields["goods_description"] = self._make_field(val, 0.7 if val else 0.0)
 
         # HS Codes — filter out monetary false positives
@@ -187,11 +187,10 @@ class InvoiceExtractor(BaseFieldExtractor):
         else:
             fields["hs_codes"] = self._make_field(None)
 
-        # Quantity — handle tabular format where quantity appears as standalone number
+        # Quantity — prefer explicit QUANTITY label over standalone numbers
         val, conf = self._find_pattern_confidence(text, [
+            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:PCS|PIECES?|METRIC\s*TONS?|MT|MTS|KGS?|BAGS?)?)",
             r"QUANTITY\s+([\d,.]+)\s*(?:MT|MTS)\b",
-            r"(\d[\d,]*\.\d+)\s*(?:MTS?|MT|KGS?)\b",
-            r"(?:QUANTITY|QTY)\s*[:.&]?\s*([\d,]+\.?\d*\s*\w+)",
         ])
         if not val:
             # Look for quantity in table context: after "IN MTS" column header

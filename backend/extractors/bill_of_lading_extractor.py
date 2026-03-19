@@ -63,8 +63,8 @@ class BillOfLadingExtractor(BaseFieldExtractor):
 
         # Vessel Name
         val, conf = self._find_pattern_confidence(text, [
-            # "VESSEL / VOYAGE: MT DESERT ROSE / V.042" — extract vessel name before voyage
-            r"VESSEL\s*/\s*VOYAGE\s*[:.]?\s*(.+?)\s*/\s*V\.",
+            # "VESSEL / VOYAGE: MT DESERT ROSE / V.042" or "... / VA512E"
+            r"VESSEL\s*/\s*VOYAGE\s*[:.]?\s*(.+?)\s*/\s*V[A-Z0-9.]",
             # "VESSEL: MT DESERT ROSE" — simple label
             r"(?:VESSEL\s*NAME|OCEAN\s*VESSEL)\s*[:.]?\s*(.+)",
             r"(?:VESSEL)\s*[:.]?\s*(.+)",
@@ -91,6 +91,8 @@ class BillOfLadingExtractor(BaseFieldExtractor):
 
         # Quantity (number of packages/containers, or bulk weight from goods description)
         val, conf = self._find_pattern_confidence(text, [
+            # "23,300 PCS OF ..." in goods description
+            r"([\d,]+\.?\d*)\s*PCS\s+(?:OF\b)",
             # Bulk oil: "60,000.000 METRIC TONS" in goods description
             r"([\d,]+\.?\d*)\s*METRIC\s*TONS?\b",
             r"(?:NO\.?\s*OF\s*(?:PACKAGES|CONTAINERS|CTNS)|QUANTITY)\s*[:.]?\s*([\d,]+\s*\w*)",

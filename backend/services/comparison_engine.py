@@ -345,7 +345,11 @@ class ComparisonEngine:
 
     @staticmethod
     def _parse_quantity_normalized(text: str) -> Optional[float]:
-        """Parse a quantity value, normalizing weight units to MT (metric tons)."""
+        """Parse a quantity value, normalizing weight units to MT (metric tons).
+
+        For non-weight units (PCS, BAGS, CARTONS), returns the raw number
+        without conversion so same-unit comparisons work directly.
+        """
         if not text:
             return None
         upper = text.upper()
@@ -358,12 +362,12 @@ class ComparisonEngine:
             raw_num = float(num_str)
         except ValueError:
             return None
-        # Detect unit and normalize to MT
-        if re.search(r"\bKGS?\b", upper):
+        # Detect unit and normalize weight to MT
+        if re.search(r"\bKGS?\b", upper) and not re.search(r"\bPCS\b|\bPIECES?\b|\bBAGS?\b", upper):
             return raw_num / 1000.0  # KGS -> MT
         if re.search(r"\bLBS?\b", upper):
             return raw_num / 2204.62  # LBS -> MT
-        # MT, MTS, METRIC TONS, or no unit — assume already in MT-compatible value
+        # MT, MTS, METRIC TONS, PCS, BAGS, or no unit — return raw number
         return raw_num
 
     @staticmethod
