@@ -282,29 +282,36 @@ class ComparisonEngine:
         lc_tokens = self._tokenize_goods(lc_value)
         doc_tokens = self._tokenize_goods(doc_value)
 
-        if not lc_tokens:
+        if not lc_tokens or not doc_tokens:
             return FieldComparison(
                 field_name=field_name, field_category=category,
                 lc_value=lc_value, doc_value=doc_value,
-                match_status=MatchStatus.MATCH,
-                match_strategy=config.strategy, similarity_score=1.0,
-                severity=Severity.INFO,
+                match_status=MatchStatus.MATCH if not lc_tokens else MatchStatus.MISMATCH,
+                match_strategy=config.strategy, similarity_score=1.0 if not lc_tokens else 0.0,
+                severity=Severity.INFO if not lc_tokens else config.severity,
             )
 
-        matched = 0
-        for lc_token in lc_tokens:
-            best = max(
-                (fuzzy_matcher.match(lc_token, dt) for dt in doc_tokens),
-                default=0.0,
-            )
-            if best >= 0.85:
-                matched += 1
+        # Check both directions: LC tokens found in doc, and doc tokens found in LC
+        # Use the better score (handles cases where doc is a subset of LC or vice versa)
+        def token_coverage(source_tokens, target_tokens):
+            matched = 0
+            for token in source_tokens:
+                best = max(
+                    (fuzzy_matcher.match(token, dt) for dt in target_tokens),
+                    default=0.0,
+                )
+                if best >= 0.85:
+                    matched += 1
+            return matched / len(source_tokens) if source_tokens else 0.0
 
-        coverage = matched / len(lc_tokens)
+        lc_in_doc = token_coverage(lc_tokens, doc_tokens)
+        doc_in_lc = token_coverage(doc_tokens, lc_tokens)
+        coverage = max(lc_in_doc, doc_in_lc)
+
         is_match = coverage >= config.threshold
         note = None
         if not is_match:
-            note = f"Only {coverage*100:.0f}% of LC description keywords found in document"
+            note = f"Only {coverage*100:.0f}% of description keywords matched"
 
         return FieldComparison(
             field_name=field_name, field_category=category,
@@ -342,15 +349,21 @@ class ComparisonEngine:
         if not text:
             return None
         upper = text.upper()
-        raw_num = parse_amount(text)
-        if raw_num is None:
+        # Extract just the numeric part (before unit text like "METRIC TONS")
+        m = re.match(r"^[\s]*([0-9,]+\.?\d*)", text.strip())
+        if not m:
+            return None
+        num_str = m.group(1).replace(",", "")
+        try:
+            raw_num = float(num_str)
+        except ValueError:
             return None
         # Detect unit and normalize to MT
         if re.search(r"\bKGS?\b", upper):
             return raw_num / 1000.0  # KGS -> MT
         if re.search(r"\bLBS?\b", upper):
             return raw_num / 2204.62  # LBS -> MT
-        # MT, MTS, TONS, or no unit — assume already in MT-compatible value
+        # MT, MTS, METRIC TONS, or no unit — assume already in MT-compatible value
         return raw_num
 
     @staticmethod
