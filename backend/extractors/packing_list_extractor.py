@@ -110,14 +110,13 @@ class PackingListExtractor(BaseFieldExtractor):
         # Quantity — look for net weight or package count
         val, conf = self._find_pattern_confidence(text, [
             r"(?:TOTAL\s*(?:PACKAGES|CTNS|CARTONS|QUANTITY)|NO\.?\s*OF\s*(?:PACKAGES|CTNS))\s*[:.]?\s*([\d,]+\s*\w*)",
-            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:MT|MTS|KGS?)\b)",
+            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|MT|MTS|KGS?)\b)",
         ])
         if not val:
             # Look for total net weight (prefer full word "NET WEIGHT" over abbreviation "NETWT")
-            # "NET WEIGHT\n: 18,400.000 KGS" — \s matches newlines
-            m = re.search(r"NET\s+WEIGHT\s*:\s*([\d,]+\.?\d*)\s*(KGS?|MTS?)", text, re.IGNORECASE)
+            m = re.search(r"NET\s+WEIGHT\s*:\s*([\d,]+\.?\d*)\s*(METRIC\s*TONS?|KGS?|MTS?)", text, re.IGNORECASE)
             if not m:
-                m = re.search(r"NETWEIGHT\s*:\s*([\d,]+\.?\d*)\s*(KGS?|MTS?)", text, re.IGNORECASE)
+                m = re.search(r"NETWEIGHT\s*:\s*([\d,]+\.?\d*)\s*(METRIC\s*TONS?|KGS?|MTS?)", text, re.IGNORECASE)
             if m:
                 val = f"{m.group(1)} {m.group(2)}"
                 conf = 0.85
@@ -125,18 +124,18 @@ class PackingListExtractor(BaseFieldExtractor):
 
         # Net Weight
         val, conf = self._find_pattern_confidence(text, [
-            r"NET\s*WEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?|LBS?))",
-            r"NETWEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?|LBS?))",
-            r"NETWT\s*:\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?|LBS?))",
-            r"(?:NET\s*(?:WEIGHT|WT\.?))\s*[:.]?\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?|LBS?))",
+            r"NET\s*WEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|KGS?|MTS?|LBS?))",
+            r"NETWEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|KGS?|MTS?|LBS?))",
+            r"NETWT\s*:\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|KGS?|MTS?|LBS?))",
+            r"(?:NET\s*(?:WEIGHT|WT\.?))\s*[:.]?\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|KGS?|MTS?|LBS?))",
         ])
         fields["net_weight"] = self._make_field(val, conf)
 
         # Gross Weight
         val, conf = self._find_pattern_confidence(text, [
-            r"GROSS\s*WEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?|LBS?))",
-            r"GROSS\s*WT\.?\s*:\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?|LBS?))",
-            r"(?:GROSS\s*(?:WEIGHT|WT\.?))\s*[:.]?\s*([\d,]+\.?\d*\s*(?:KGS?|MTS?|LBS?))",
+            r"GROSS\s*WEIGHT\s*:\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|KGS?|MTS?|LBS?))",
+            r"GROSS\s*WT\.?\s*:\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|KGS?|MTS?|LBS?))",
+            r"(?:GROSS\s*(?:WEIGHT|WT\.?))\s*[:.]?\s*([\d,]+\.?\d*\s*(?:METRIC\s*TONS?|KGS?|MTS?|LBS?))",
         ])
         fields["gross_weight"] = self._make_field(val, conf)
 
@@ -171,7 +170,14 @@ class PackingListExtractor(BaseFieldExtractor):
         """Find the main product description line."""
         for line in lines:
             line_s = line.strip()
-            if re.search(r"GLYCOL|CHEMICAL|STEEL|COTTON|RICE|SUGAR|CEMENT|POLYMER", line_s, re.IGNORECASE):
-                if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING|CERTIFIED)", line_s, re.IGNORECASE):
+            if re.search(r"GLYCOL|CHEMICAL|STEEL|COTTON|\bRICE\b|\bOIL\b|SUGAR|CEMENT|POLYMER|CRUDE|PETROLEUM|FUEL|DIESEL|LNG|NAPHTHA", line_s, re.IGNORECASE):
+                if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING|CERTIFIED|COUNTRY|PRODUCT\s*:)", line_s, re.IGNORECASE):
                     return line_s
+        # Also try "PRODUCT:" label
+        for line in lines:
+            m = re.match(r"PRODUCT\s*:\s*(.+)", line.strip(), re.IGNORECASE)
+            if m:
+                val = m.group(1).strip()
+                if len(val) > 5:
+                    return val
         return None

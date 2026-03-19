@@ -6,6 +6,49 @@ from extractors.base import BaseFieldExtractor
 
 
 class LCAdviceExtractor(BaseFieldExtractor):
+
+    # SWIFT tags are 2-3 characters: 2 digits optionally followed by a letter (e.g., 20, 31C, 32B, 44E)
+    _SWIFT_TAG_RE = re.compile(r"^\s*(\d{2}[A-Z]?)\s*$")
+
+    def _is_swift_tag_line(self, line: str) -> bool:
+        """Return True if the line contains only a SWIFT tag like '50', '32B', '44E'."""
+        return bool(self._SWIFT_TAG_RE.match(line))
+
+    def _find_value_after_label(
+        self, text: str, label_keywords: list[str], max_lines: int = 4
+    ) -> str | None:
+        """Scan lines for a label keyword, then collect value lines until the next SWIFT tag.
+
+        Handles the split-line PDF table format where:
+          line N:   SWIFT tag (e.g. '50')
+          line N+1: label (e.g. 'APPLICANT')
+          line N+2: value start
+          ...
+        We look for a line matching any label keyword, then gather subsequent lines
+        that are not SWIFT tags and not empty.
+        """
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            stripped = line.strip().upper()
+            for kw in label_keywords:
+                if kw.upper() == stripped or kw.upper() in stripped:
+                    # Found the label line — collect value from subsequent lines
+                    block_lines = []
+                    for j in range(i + 1, min(i + 1 + max_lines, len(lines))):
+                        next_line = lines[j]
+                        next_stripped = next_line.strip()
+                        if not next_stripped:
+                            break
+                        # Stop at next SWIFT tag line (just a tag by itself)
+                        if self._is_swift_tag_line(next_line):
+                            break
+                        # Also stop at lines that look like known labels (all-caps short labels)
+                        # but NOT value lines that happen to be uppercase
+                        block_lines.append(next_stripped)
+                    if block_lines:
+                        return "\n".join(block_lines)
+        return None
+
     def extract_fields(self, raw_text: str) -> Dict[str, ExtractedField]:
         fields = {}
         text = raw_text
@@ -15,18 +58,26 @@ class LCAdviceExtractor(BaseFieldExtractor):
             r":20:\s*(.+)",                                          # SWIFT MT700 field 20
             r"20\s+DC\s*NO\s*:\s*(.+)",                              # Spaced SWIFT format
             r"DC\s*NO\s*:\s*(\S+)",                                  # Generic DC NO
-            r"(?:L/?C\s*(?:No\.?|Number|Ref)?\s*[:.]?\s*)([A-Z0-9][A-Z0-9/\-]+)",
             r"(?:CREDIT\s*(?:No\.?|Number)\s*[:.]?\s*)([A-Z0-9][A-Z0-9/\-]+)",
+            r"(?:\bL/?C\s*(?:No\.?|Number|Ref)\s*[:.]?\s*)([A-Z0-9][A-Z0-9/\-]+)",
             r"(?:DOCUMENTARY\s*CREDIT\s*[:.]?\s*)([A-Z0-9][A-Z0-9/\-]+)",
         ])
         if val:
             val = val.strip()
+        # Fallback: split-line format — "DOCUMENTARY CREDIT NO" on its own line, value on next
+        if not val:
+            fallback = self._find_value_after_label(text, [
+                "DOCUMENTARY CREDIT NO", "DC NO"
+            ], max_lines=1)
+            if fallback:
+                val = fallback.strip()
+                conf = 0.7
         fields["lc_number"] = self._make_field(val, conf)
 
         # Beneficiary — handle SWIFT `:59:` and spaced `59   BENEFICIARY:` formats
         val = self._extract_swift_block(text, [
             r"59\s+BENEFICIARY\s*:", r":59:", r"BENEFICIARY\s*(?:NAME)?\s*:"
-        ], max_lines=4)
+        ], max_lines=4, label_keywords=["BENEFICIARY"])
         if val:
             lines = val.strip().split("\n")
             fields["beneficiary_name"] = self._make_field(lines[0], 0.8)
@@ -43,7 +94,7 @@ class LCAdviceExtractor(BaseFieldExtractor):
         # Applicant — handle SWIFT `:50:` and spaced `50   APPLICANT:` formats
         val = self._extract_swift_block(text, [
             r"50\s+APPLICANT\s*:", r":50:", r"APPLICANT\s*:", r"ACCOUNT\s*PARTY\s*:"
-        ], max_lines=4)
+        ], max_lines=4, label_keywords=["APPLICANT"])
         if val:
             lines = val.strip().split("\n")
             fields["applicant_name"] = self._make_field(lines[0], 0.8)
@@ -70,6 +121,14 @@ class LCAdviceExtractor(BaseFieldExtractor):
                 curr_amt_match = m.group(1)
                 break
 
+        # Fallback: split-line format — "CURRENCY CODE, AMOUNT" label, value on next line
+        if not curr_amt_match:
+            fallback = self._find_value_after_label(text, [
+                "CURRENCY CODE, AMOUNT", "CURRENCY CODE"
+            ], max_lines=1)
+            if fallback:
+                curr_amt_match = fallback.strip()
+
         if curr_amt_match:
             m2 = re.match(r"([A-Z]{3})\s*([\d,]+\.?\d*)", curr_amt_match)
             if m2:
@@ -89,6 +148,18 @@ class LCAdviceExtractor(BaseFieldExtractor):
                 r"DC\s*AMT\s*:\s*[A-Z]{3}\s*([\d,]+\.?\d*)",
                 r"(?:AMOUNT|VALUE)\s*[:.]?\s*(?:[A-Z]{3}\s*)?([\d,]+\.?\d*)",
             ])
+            # Fallback: split-line format — "CURRENCY CODE, AMOUNT" label, value on next line
+            if not curr or not amt:
+                fallback = self._find_value_after_label(text, [
+                    "CURRENCY CODE, AMOUNT", "CURRENCY CODE"
+                ], max_lines=1)
+                if fallback:
+                    m2 = re.match(r"([A-Z]{3})\s*([\d,]+\.?\d*)", fallback.strip())
+                    if m2:
+                        if not curr:
+                            curr, curr_conf = m2.group(1), 0.8
+                        if not amt:
+                            amt, amt_conf = m2.group(2), 0.8
             fields["currency"] = self._make_field(curr, curr_conf)
             fields["amount"] = self._make_field(amt.replace(",", "") if amt else None, amt_conf)
 
@@ -101,12 +172,26 @@ class LCAdviceExtractor(BaseFieldExtractor):
             r"(?:EXPIRY|EXPIRATION)\s*(?:DATE)?\s*[:.]?\s*(\d{1,2}\s+\w+\s+\d{4})",
             r"(?:VALID\s*(?:UNTIL|TILL|TO))\s*[:.]?\s*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})",
         ])
+        # Fallback: split-line format — "DATE AND PLACE OF EXPIRY" label, value on next line
+        if not val:
+            fallback = self._find_value_after_label(text, [
+                "DATE AND PLACE OF EXPIRY", "EXPIRY DATE AND PLACE",
+                "DATE OF EXPIRY", "EXPIRY DATE"
+            ], max_lines=1)
+            if fallback:
+                m_date = re.search(r"(\d{2}[A-Z]{3}\d{2})", fallback)
+                if m_date:
+                    val = m_date.group(1)
+                    conf = 0.7
+                else:
+                    val = fallback.strip()
+                    conf = 0.6
         fields["expiry_date"] = self._make_field(val, conf)
 
         # Goods Description — handle `:45A:` and spaced `45A  GOODS:` formats
         val = self._extract_swift_block(text, [
             r"45A\s+GOODS\s*:", r":45A:", r"GOODS\s*(?:AND/?OR\s*SERVICES)?\s*:"
-        ], max_lines=10)
+        ], max_lines=10, label_keywords=["DESCRIPTION OF GOODS"])
         if not val:
             val = self._extract_block_after_keyword(text, [
                 "DESCRIPTION OF GOODS", "GOODS", "MERCHANDISE", "COMMODITY",
@@ -145,10 +230,11 @@ class LCAdviceExtractor(BaseFieldExtractor):
         else:
             fields["hs_codes"] = self._make_field(None)
 
-        # Quantity
+        # Quantity — capture multi-word units like "METRIC TONS"
         val, conf = self._find_pattern_confidence(text, [
+            r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*(?:METRIC\s+TONS?|TONS?|MTS?|KGS?|PCS|PIECES|SETS|UNITS|CTNS?|CARTONS|BAGS|ROLLS|BALES)(?:\s*\([^)]*\))?)",
             r"(?:QUANTITY|QTY)\s*[:.]?\s*([\d,]+\.?\d*\s*\w+)",
-            r"(\d[\d,]*\.?\d*)\s*(?:PCS|PIECES|SETS|UNITS|TONS|KGS?|MTS?|CTNS?|CARTONS|BAGS|ROLLS|BALES)",
+            r"(\d[\d,]*\.?\d*)\s*(?:METRIC\s+TONS?|PCS|PIECES|SETS|UNITS|TONS|KGS?|MTS?|CTNS?|CARTONS|BAGS|ROLLS|BALES)",
         ])
         fields["quantity"] = self._make_field(val, conf)
 
@@ -167,7 +253,7 @@ class LCAdviceExtractor(BaseFieldExtractor):
             r"PORT\s*OF\s*LOADING",
             r"LOADING\s*PORT",
             r"PLACE\s*OF\s*RECEIPT",
-        ])
+        ], label_keywords=["PORT OF LOADING", "LOADING PORT"])
         fields["port_of_loading"] = self._make_field(val, 0.9 if val else 0.0)
 
         # Port of Discharge — same multiline handling
@@ -178,7 +264,7 @@ class LCAdviceExtractor(BaseFieldExtractor):
             r"DISCHARGE\s*PORT",
             r"PLACE\s*OF\s*DELIVERY",
             r"FINAL\s*DESTINATION",
-        ])
+        ], label_keywords=["PORT OF DISCHARGE", "DISCHARGE PORT"])
         fields["port_of_discharge"] = self._make_field(val, 0.9 if val else 0.0)
 
         # Latest Shipment Date — handle DDMMMYY (31AUG25) and `44C  LATEST DATE OF SHIPMENT:`
@@ -191,6 +277,19 @@ class LCAdviceExtractor(BaseFieldExtractor):
         ])
         if val:
             val = val.strip()
+        # Fallback: split-line format — "LATEST DATE OF SHIPMENT" label, value on next line
+        if not val:
+            fallback = self._find_value_after_label(text, [
+                "LATEST DATE OF SHIPMENT", "LATEST SHIPMENT DATE"
+            ], max_lines=1)
+            if fallback:
+                m_date = re.search(r"(\d{2}[A-Z]{3}\d{2})", fallback)
+                if m_date:
+                    val = m_date.group(1)
+                    conf = 0.7
+                else:
+                    val = fallback.strip()
+                    conf = 0.6
         fields["latest_shipment_date"] = self._make_field(val, conf)
 
         # Partial Shipments
@@ -201,6 +300,14 @@ class LCAdviceExtractor(BaseFieldExtractor):
         ])
         if val:
             val = val.strip()
+        # Fallback: split-line format — "PARTIAL SHIPMENTS" label, value on next line
+        if not val:
+            fallback = self._find_value_after_label(text, [
+                "PARTIAL SHIPMENTS", "PARTIAL SHIPMENT"
+            ], max_lines=1)
+            if fallback:
+                val = fallback.strip()
+                conf = 0.7
         fields["partial_shipments"] = self._make_field(val, conf)
 
         # Transhipment
@@ -211,6 +318,14 @@ class LCAdviceExtractor(BaseFieldExtractor):
         ])
         if val:
             val = val.strip()
+        # Fallback: split-line format — "TRANSHIPMENT" label, value on next line
+        if not val:
+            fallback = self._find_value_after_label(text, [
+                "TRANSHIPMENT", "TRANSSHIPMENT"
+            ], max_lines=1)
+            if fallback:
+                val = fallback.strip()
+                conf = 0.7
         fields["transhipment"] = self._make_field(val, conf)
 
         # Incoterms — prefer TRADE TERM line over random FOB/CFR mentions
@@ -237,12 +352,16 @@ class LCAdviceExtractor(BaseFieldExtractor):
 
         return fields
 
-    def _extract_swift_block(self, text: str, patterns: list, max_lines: int = 4) -> str | None:
+    def _extract_swift_block(self, text: str, patterns: list, max_lines: int = 4,
+                             label_keywords: list | None = None) -> str | None:
         """Extract a multi-line block from SWIFT-style fields.
 
         Handles both `:NN:` and spaced `NN   FIELD:` formats where the value
         may start on the same line (after large whitespace gap) or continue on
         indented lines below.
+
+        If label_keywords is provided, also tries a split-line fallback where the
+        label is on its own line and values follow on subsequent lines.
         """
         lines = text.split("\n")
         for i, line in enumerate(lines):
@@ -272,14 +391,21 @@ class LCAdviceExtractor(BaseFieldExtractor):
 
                     if block_lines:
                         return "\n".join(block_lines)
+
+        # Fallback: split-line format (PDF table with tag/label/value on separate lines)
+        if label_keywords:
+            return self._find_value_after_label(text, label_keywords, max_lines=max_lines)
         return None
 
-    def _extract_swift_field_value(self, text: str, patterns: list) -> str | None:
+    def _extract_swift_field_value(self, text: str, patterns: list,
+                                   label_keywords: list | None = None) -> str | None:
         """Extract a single-value SWIFT field that may span onto the next line.
 
         For fields like:
             44E  LOADING PORT/DEPART AIRPORT:
                  ANY SEAPORT OF CHINA
+
+        If label_keywords is provided, also tries split-line fallback.
         """
         lines = text.split("\n")
         for i, line in enumerate(lines):
@@ -297,6 +423,11 @@ class LCAdviceExtractor(BaseFieldExtractor):
                     # Value is on the next line (indented)
                     if i + 1 < len(lines):
                         next_val = lines[i + 1].strip()
-                        if next_val and not re.match(r"^\d{2}[A-Z]?\s+\w", lines[i + 1]):
+                        if next_val and not re.match(r"^\d{2}[A-Z]?\s+\w", lines[i + 1]) \
+                                and not self._is_swift_tag_line(lines[i + 1]):
                             return next_val
+
+        # Fallback: split-line format
+        if label_keywords:
+            return self._find_value_after_label(text, label_keywords, max_lines=1)
         return None

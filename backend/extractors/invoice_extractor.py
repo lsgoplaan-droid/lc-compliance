@@ -24,12 +24,17 @@ class InvoiceExtractor(BaseFieldExtractor):
                 r"(HPS/INV/\S+)",
                 r"(?:INV\.?\s*(?:No\.?|#))\s*[:.&]?\s*([A-Z0-9][A-Z0-9/\-]+)",
                 r"(?:INVOICE\s*(?:NUMBER|#))\s*[:.&]?\s*([A-Z0-9][A-Z0-9/\-]+)",
+                r"INVOICE\s*NO\s*[:.&]?\s*([A-Z0-9][A-Z0-9/\-]+)",
             ])
         fields["invoice_number"] = self._make_field(val, conf)
 
         # Invoice Date - look for standalone date line or after invoice number
         val, conf = self._find_pattern_confidence(text, [
             r"(?:INVOICE\s*DATE|DATE\s*OF\s*INVOICE)\s*[:.&]?\s*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})",
+            r"(?:INVOICE\s*DATE|DATE\s*OF\s*INVOICE)\s*[:.&]?\s*(\d{1,2}\s+\w+\s+\d{4})",
+            r"^DATE\s*:\s*(\d{1,2}\s+\w+\s+\d{4})",
+            r"DATE\s*:\s*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})",
+            r"DATE\s*:\s*(\d{1,2}\s+\w+\s+\d{4})",
         ])
         if not val:
             # Look for date on its own line (e.g. "25-8-2025")
@@ -99,7 +104,7 @@ class InvoiceExtractor(BaseFieldExtractor):
                         if re.match(r"^\d{6,}", al):
                             continue
                         # Keep location-like lines (addresses, cities, countries)
-                        if re.search(r"(?:ESTATE|ROAD|STREET|FLOOR|CENTRE|BSCIC|KUSHTIA|BANGLADESH|SINGAPORE|CHINA|DHAKA|\d{4,}\s)", al, re.IGNORECASE):
+                        if re.search(r"(?:ESTATE|ROAD|STREET|FLOOR|CENTRE|BSCIC|KUSHTIA|BANGLADESH|SINGAPORE|CHINA|DHAKA|TOWER|PLACE|AVENUE|ISLAND|HARBOURFRONT|BUILDING|BLOCK|UNIT|SUITE|\d{4,}\s)", al, re.IGNORECASE):
                             addr_lines.append(al)
                     if addr_lines:
                         buyer_addr = "\n".join(addr_lines)
@@ -121,12 +126,22 @@ class InvoiceExtractor(BaseFieldExtractor):
         conf = 0.0
         for i, line in enumerate(lines):
             if re.match(r"^\s*TOTAL\s*$", line, re.IGNORECASE):
-                # Check next line for amount
-                if i + 1 < len(lines):
-                    m = re.match(r"^\s*([\d,]+\.\d{2})\s*$", lines[i + 1].strip())
+                # Collect all standalone numbers on the lines following TOTAL
+                # In tabular invoices, TOTAL is followed by quantity, unit price, then total amount
+                # The total amount is the largest number among them
+                candidates = []
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    next_line = lines[j].strip()
+                    m = re.match(r"^([\d,]+\.\d{2,})\s*$", next_line)
                     if m:
-                        val, conf = m.group(1), 0.95
-                        break
+                        candidates.append(m.group(1))
+                    elif next_line and not re.match(r"^[\d,.\s]+$", next_line):
+                        break  # stop at non-numeric line
+                if candidates:
+                    # Pick the largest numeric value (the total amount)
+                    best = max(candidates, key=lambda x: float(x.replace(",", "")))
+                    val, conf = best, 0.95
+                    break
         if not val:
             val, conf = self._find_pattern_confidence(text, [
                 r"(?:TOTAL\s*(?:AMOUNT|VALUE)|GRAND\s*TOTAL)\s*[:.&]?\s*(?:[A-Z]{3}\s*)?([\d,]+\.?\d*)",
@@ -140,10 +155,12 @@ class InvoiceExtractor(BaseFieldExtractor):
         for line in lines:
             line_s = line.strip()
             # Look for product name (e.g. "MONOETHYLENEGLYCOL" or "MONO ETHYLENE GLYCOL")
-            if re.search(r"GLYCOL|CHEMICAL|STEEL|COTTON|RICE|SUGAR|CEMENT|POLYMER", line_s, re.IGNORECASE):
+            if re.search(r"(?:GLYCOL|CHEMICAL\b|\bSTEEL\b|\bCOTTON\b|\bRICE\b|\bSUGAR\b|\bCEMENT\b|POLYMER|\bCRUDE\b|\bOIL\b|PETROLEUM|\bFUEL\b|\bDIESEL\b|\bGASOLINE\b|\bLNG\b|\bLPG\b|\bNAPHTHA\b|\bBITUMEN\b)", line_s, re.IGNORECASE):
                 if not re.match(r"(?:DESCRIPTION|QUANTITY|PRICE|AMOUNT|TOTAL|PACKING|FOB|TRADE|SHIPPING)", line_s, re.IGNORECASE):
-                    val = line_s
-                    break
+                    # Skip company names (e.g. "ARABIAN GULF PETROLEUM LLC")
+                    if not re.search(r"\b(?:LLC|LTD|LIMITED|INC|CORP|PTE)\b", line_s, re.IGNORECASE):
+                        val = line_s
+                        break
         if not val:
             val_block = self._extract_block_after_keyword(text, [
                 "DESCRIPTION OF GOODS", "DESCRIPTIONOFGOODS", "DESCRIPTION"
@@ -153,7 +170,7 @@ class InvoiceExtractor(BaseFieldExtractor):
                 good_lines = []
                 for l in val_block.split("\n"):
                     l = l.strip()
-                    if l and not re.match(r"^(?:IN MTS|QUANTITY|PRICE|AMOUNT|US\$|[\d,.]+)$", l, re.IGNORECASE):
+                    if l and not re.match(r"^(?:IN MTS|QUANTITY|PRICE|AMOUNT|US\$|Unit Price|Description|[\d,.]+)", l, re.IGNORECASE):
                         good_lines.append(l)
                 val = "\n".join(good_lines[:5]) if good_lines else None
         fields["goods_description"] = self._make_field(val, 0.7 if val else 0.0)
@@ -199,17 +216,19 @@ class InvoiceExtractor(BaseFieldExtractor):
             r"(?:@|AT)\s*(?:[A-Z]{3}\s*)?([\d,]+\.?\d*)\s*(?:PER|/)",
         ])
         if not val:
-            # Extract from tabular format: look for PRICE/ column header, then value below
-            # Table layout: PRICE/ → several header lines → quantity → unit_price → product → amount
+            # Extract from tabular format: look for PRICE/ or "Unit Price" column header, then value below
             for i, line in enumerate(lines):
-                if re.search(r"PRICE\s*/", line, re.IGNORECASE):
+                if re.search(r"PRICE\s*/|Unit\s*Price", line, re.IGNORECASE):
                     # Scan next lines for a decimal number that looks like a unit price
-                    for j in range(i + 1, min(i + 10, len(lines))):
+                    for j in range(i + 1, min(i + 15, len(lines))):
                         candidate = lines[j].strip()
-                        m = re.match(r"^([\d,]+\.\d{2})$", candidate)
+                        # Stop at TOTAL line
+                        if re.match(r"^\s*TOTAL\s*$", candidate, re.IGNORECASE):
+                            break
+                        m = re.match(r"^([\d,]+\.\d{2,})$", candidate)
                         if m:
                             price_val = float(m.group(1).replace(",", ""))
-                            # Unit prices are typically < 5000; skip totals
+                            # Unit prices are typically < 5000; skip totals and quantities
                             if price_val < 5000:
                                 val, conf = m.group(1), 0.8
                                 break
@@ -249,6 +268,8 @@ class InvoiceExtractor(BaseFieldExtractor):
             if re.search(r"Port\s*of\s*Loading", line, re.IGNORECASE):
                 # Check remaining text on same line first
                 after = re.split(r"Port\s*of\s*Loading", line, flags=re.IGNORECASE)[-1].strip()
+                # Strip leading colon/separator
+                after = re.sub(r"^[:\s]+", "", after).strip()
                 if after and re.search(r"[A-Z]{3,}", after):
                     val, conf = after, 0.9
                     break
@@ -267,6 +288,13 @@ class InvoiceExtractor(BaseFieldExtractor):
         conf = 0.0
         for i, line in enumerate(lines):
             if re.search(r"Port\s*of\s*Discharge", line, re.IGNORECASE):
+                # Check for value on the same line after colon
+                after = re.split(r"Port\s*of\s*Discharge", line, flags=re.IGNORECASE)[-1].strip()
+                after = re.sub(r"^[:\s]+", "", after).strip()
+                if after and re.search(r"[A-Z]{3,}", after):
+                    val, conf = after, 0.9
+                    break
+                # Check following lines
                 for j in range(i + 1, min(i + 5, len(lines))):
                     candidate = lines[j].strip()
                     if not candidate:
