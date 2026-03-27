@@ -1,23 +1,32 @@
 import { useState, useEffect } from "react";
 import { SessionProvider, useSession } from "./context/SessionContext";
 import Header from "./components/layout/Header";
+import type { AppMode } from "./components/layout/Header";
 import StepIndicator from "./components/layout/StepIndicator";
 import UploadPage from "./pages/UploadPage";
 import ReviewPage from "./pages/ReviewPage";
 import ComparisonPage from "./pages/ComparisonPage";
 import ReportPage from "./pages/ReportPage";
+import GeneratePage from "./pages/GeneratePage";
 import AboutPage from "./pages/AboutPage";
 
 function AppContent() {
   const { session, createSession, error, clearError, documents, comparisons } = useSession();
   const [step, setStep] = useState("upload");
   const [showAbout, setShowAbout] = useState(false);
+  const [mode, setMode] = useState<AppMode>("checker");
 
   useEffect(() => {
     if (!session) {
       createSession();
     }
   }, []);
+
+  const handleModeChange = (newMode: AppMode) => {
+    setMode(newMode);
+    setStep("upload");
+    createSession(); // Fresh session for each mode switch
+  };
 
   const completedSteps: string[] = [];
   const lcUploaded = documents.some((d) => d.document_type === "lc_advice");
@@ -29,13 +38,20 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Header onAboutClick={() => setShowAbout(true)} />
-      {showAbout && <AboutPage onClose={() => setShowAbout(false)} />}
-      <StepIndicator
-        currentStep={step}
-        onStepClick={setStep}
-        completedSteps={completedSteps}
+      <Header
+        mode={mode}
+        onModeChange={handleModeChange}
+        onAboutClick={() => setShowAbout(true)}
       />
+      {showAbout && <AboutPage onClose={() => setShowAbout(false)} />}
+
+      {mode === "checker" && (
+        <StepIndicator
+          currentStep={step}
+          onStepClick={setStep}
+          completedSteps={completedSteps}
+        />
+      )}
 
       {error && (
         <div className="max-w-4xl mx-auto mt-4 px-6">
@@ -49,14 +65,19 @@ function AppContent() {
       )}
 
       <main className="px-6 py-6">
-        {step === "upload" && <UploadPage onComplete={() => setStep("review")} />}
-        {step === "review" && (
-          <ReviewPage onComplete={() => setStep("compare")} onBack={() => setStep("upload")} />
+        {mode === "checker" && (
+          <>
+            {step === "upload" && <UploadPage onComplete={() => setStep("review")} />}
+            {step === "review" && (
+              <ReviewPage onComplete={() => setStep("compare")} onBack={() => setStep("upload")} />
+            )}
+            {step === "compare" && (
+              <ComparisonPage onComplete={() => setStep("report")} onBack={() => setStep("review")} />
+            )}
+            {step === "report" && <ReportPage onBack={() => setStep("compare")} />}
+          </>
         )}
-        {step === "compare" && (
-          <ComparisonPage onComplete={() => setStep("report")} onBack={() => setStep("review")} />
-        )}
-        {step === "report" && <ReportPage onBack={() => setStep("compare")} />}
+        {mode === "generator" && <GeneratePage />}
       </main>
     </div>
   );

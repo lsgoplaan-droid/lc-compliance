@@ -1,10 +1,15 @@
-import { FileCheck, Info } from "lucide-react";
+import { FileCheck, Info, ClipboardCheck, Wand2 } from "lucide-react";
+import { clsx } from "clsx";
+
+export type AppMode = "checker" | "generator";
 
 interface Props {
+  mode?: AppMode;
+  onModeChange?: (mode: AppMode) => void;
   onAboutClick?: () => void;
 }
 
-export default function Header({ onAboutClick }: Props) {
+export default function Header({ mode = "checker", onModeChange, onAboutClick }: Props) {
   return (
     <header className="bg-white border-b border-slate-200 px-6 py-4">
       <div className="flex items-center justify-between">
@@ -17,15 +22,45 @@ export default function Header({ onAboutClick }: Props) {
             </p>
           </div>
         </div>
-        {onAboutClick && (
-          <button
-            onClick={onAboutClick}
-            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-blue-600 transition-colors px-3 py-1.5 rounded-lg hover:bg-slate-50"
-          >
-            <Info className="w-4 h-4" />
-            About
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {onModeChange && (
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
+              <button
+                onClick={() => onModeChange("checker")}
+                className={clsx(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                  mode === "checker"
+                    ? "bg-white text-blue-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                Check
+              </button>
+              <button
+                onClick={() => onModeChange("generator")}
+                className={clsx(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                  mode === "generator"
+                    ? "bg-white text-amber-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                <Wand2 className="w-4 h-4" />
+                Generate
+              </button>
+            </div>
+          )}
+          {onAboutClick && (
+            <button
+              onClick={onAboutClick}
+              className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-blue-600 transition-colors px-3 py-1.5 rounded-lg hover:bg-slate-50"
+            >
+              <Info className="w-4 h-4" />
+              About
+            </button>
+          )}
+        </div>
       </div>
     </header>
   );

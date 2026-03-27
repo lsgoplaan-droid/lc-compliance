@@ -19,6 +19,7 @@ interface SessionContextType extends SessionState {
   loadDemoSession: () => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
   refreshDocuments: () => Promise<void>;
+  generateDocs: (docTypes?: string[]) => Promise<void>;
   runComparison: () => Promise<void>;
   loadReport: () => Promise<void>;
   clearError: () => void;
@@ -106,6 +107,29 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [state.session]);
 
+  const generateDocs = useCallback(async (docTypes?: string[]) => {
+    if (!state.session) return;
+    setLoading(true);
+    try {
+      const params = docTypes?.length ? { doc_types: docTypes } : {};
+      const { data } = await (await import("../api/client")).default.post(
+        `/sessions/${state.session.session_id}/generate`,
+        params
+      );
+      const documents = await documentsApi.listDocuments(state.session.session_id);
+      setState((s) => ({
+        ...s,
+        session: { ...s.session!, supporting_doc_count: data.supporting_doc_count },
+        documents,
+        comparisons: [],
+        report: null,
+        loading: false,
+      }));
+    } catch (e: any) {
+      setError(e.response?.data?.detail || "Failed to generate documents");
+    }
+  }, [state.session]);
+
   const runComparison = useCallback(async () => {
     if (!state.session) return;
     setLoading(true);
@@ -138,6 +162,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         loadDemoSession,
         loadSession,
         refreshDocuments,
+        generateDocs,
         runComparison,
         loadReport,
         clearError,
